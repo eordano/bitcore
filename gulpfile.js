@@ -239,12 +239,15 @@ gulp.task('release:checkout-master', function(cb) {
   git.checkout('master', {args: ''}, cb);
 });
 
-gulp.task('release:build-commit', function(cb) {
+gulp.task('release:add-built-files', function() {
+  return gulp.src(['./browser/bitcore.js', './browser/bitcore.min.js', './package.json', './bower.json'])
+    .pipe(git.add({args: '-f'}));
+});
+
+gulp.task('release:build-commit', ['release:add-built-files'], function() {
   var pjson = require('./package.json');
-  gulp.src(['./browser/bitcore.js', './browser/bitcore.min.js', './package.json', './bower.json'])
-    .pipe(git.add({args: '-f'}, function() {
-      git.commit('Build: ' + pjson.version, {args: ''}, cb);
-    }));
+  return gulp.src(['./browser/bitcore.js', './browser/bitcore.min.js', './package.json', './bower.json'])
+    .pipe(git.commit('Build: ' + pjson.version, {args: ''}));
 });
 
 gulp.task('release:version-commit', function() {
@@ -290,9 +293,9 @@ gulp.task('release', function(cb) {
     // Run npm install
     ['release:install'],
     // Build browser bundle
-    ['browser'],
+    ['browser:compressed'],
     // Run tests with gulp test
-    ['test'],
+    // ['test'],
     // Update package.json and bower.json
     ['release:bump'],
     // Commit 
