@@ -7,6 +7,7 @@ var expect = require('chai').expect;
 var _ = require('lodash');
 
 var bitcore = require('../..');
+var BufferUtil = bitcore.util.buffer;
 var Transaction = bitcore.Transaction;
 var PrivateKey = bitcore.PrivateKey;
 var Script = bitcore.Script;
@@ -17,6 +18,29 @@ var errors = bitcore.errors;
 var transactionVector = require('../data/tx_creation');
 
 describe('Transaction', function() {
+
+  var fromAddress = 'mszYqVnqKoQx4jcTdJXxwKAissE3Jbrrc1';
+  var simpleUtxoWith100000Satoshis = {
+    address: fromAddress,
+    txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
+    outputIndex: 0,
+    script: Script.buildPublicKeyHashOut(fromAddress).toString(),
+    satoshis: 100000
+  };
+  var anyoneCanSpendUTXO = JSON.parse(JSON.stringify(simpleUtxoWith100000Satoshis));
+  anyoneCanSpendUTXO.script = new Script().add('OP_TRUE');
+  var toAddress = 'mrU9pEmAx26HcbKVrABvgL7AwA5fjNFoDc';
+  var changeAddress = 'mgBCJAsvzgT2qNNeXsoECg2uPKrUsZ76up';
+  var changeAddressP2SH = '2N7T3TAetJrSCruQ39aNrJvYLhG1LJosujf';
+  var privateKey = 'cSBnVM4xvxarwGQuAfQFwqDg9k5tErHUHzgWsEfD4zdwUasvqRVY';
+
+  var simpleUtxoWith1BTC = {
+    address: fromAddress,
+    txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
+    outputIndex: 0,
+    script: Script.buildPublicKeyHashOut(fromAddress).toString(),
+    satoshis: 1e8
+  };
 
   it('should serialize and deserialize correctly a given transaction', function() {
     var transaction = new Transaction(tx_1_hex);
@@ -54,8 +78,55 @@ describe('Transaction', function() {
     (stringTx._outputAmount).should.equal(10000);
   });
 
-  it('returns the fee correctly', function() {
-    testTransaction.getFee().should.equal(10000);
+  describe('fee estimation', function() {
+    it('estimates the fee correctly for a normal transaction with few bytes', function() {
+      testTransaction.getFee().should.equal(10000);
+    });
+
+    it('estimates the fee correctly for a transaction of about 250 bytes', function() {
+      var testTransaction = new Transaction();
+      testTransaction.change(toAddress);
+
+      var script = Script.buildPublicKeyHashOut(fromAddress).toString();
+      for (var i = 1000; i < 1100; i++) {
+        var output = {
+          txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe5' + i,
+          outputIndex: 0,
+          script: script,
+          satoshis: 100000
+        }
+        testTransaction.from(output);
+      }
+      testTransaction.sign(privateKey);
+
+      console.log(testTransaction._estimateFee());
+      console.log(testTransaction.getFee());
+      console.log(testTransaction.serialize().length);
+    });
+    it('estimates the fee correctly for multisig inputs', function() {
+      var private1 = '6ce7e97e317d2af16c33db0b9270ec047a91bff3eff8558afb5014afb2bb5976';
+      var private2 = 'c9b26b0f771a0d2dad88a44de90f05f416b3b385ff1d989343005546a0032890';
+      var public1 = new PrivateKey(private1).publicKey;
+      var public2 = new PrivateKey(private2).publicKey;
+      var testTransaction = new Transaction();
+      testTransaction.change(toAddress);
+
+      var script = Script.buildMultisigOut([public1, public2], 2).toScriptHashOut();
+
+      for (var i = 1000; i < 1100; i++) {
+        var output = {
+          txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe5' + i,
+          outputIndex: 0,
+          script: script,
+          satoshis: 100000
+        };
+        testTransaction.from(output, [public1, public2], 2);
+      }
+      testTransaction.sign(private1);
+      testTransaction.sign(private2);
+
+      console.log('C', testTransaction.serialize());
+    });
   });
 
   it('serialize to Object roundtrip', function() {
@@ -109,31 +180,6 @@ describe('Transaction', function() {
       });
     });
   });
-
-  // TODO: Migrate this into a test for inputs
-
-  var fromAddress = 'mszYqVnqKoQx4jcTdJXxwKAissE3Jbrrc1';
-  var simpleUtxoWith100000Satoshis = {
-    address: fromAddress,
-    txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
-    outputIndex: 0,
-    script: Script.buildPublicKeyHashOut(fromAddress).toString(),
-    satoshis: 100000
-  };
-  var anyoneCanSpendUTXO = JSON.parse(JSON.stringify(simpleUtxoWith100000Satoshis));
-  anyoneCanSpendUTXO.script = new Script().add('OP_TRUE');
-  var toAddress = 'mrU9pEmAx26HcbKVrABvgL7AwA5fjNFoDc';
-  var changeAddress = 'mgBCJAsvzgT2qNNeXsoECg2uPKrUsZ76up';
-  var changeAddressP2SH = '2N7T3TAetJrSCruQ39aNrJvYLhG1LJosujf';
-  var privateKey = 'cSBnVM4xvxarwGQuAfQFwqDg9k5tErHUHzgWsEfD4zdwUasvqRVY';
-
-  var simpleUtxoWith1BTC = {
-    address: fromAddress,
-    txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
-    outputIndex: 0,
-    script: Script.buildPublicKeyHashOut(fromAddress).toString(),
-    satoshis: 1e8
-  };
 
   describe('adding inputs', function() {
 
@@ -323,6 +369,16 @@ describe('Transaction', function() {
       expect(function() {
         return transaction.serialize();
       }).to.not.throw(errors.Transaction.DustOutputs);
+    });
+    it.only('fails if transaction size is greater than 100 000 bytes', function() {
+      var transaction = new Transaction();
+      var oneKiloByte = BufferUtil.emptyBuffer(1000);
+      for (var i = 0; i < 100; i++) {
+        transaction.addData(oneKiloByte);
+      }
+      expect(function() {
+        transaction.serialize();
+      }).to.throw(errors.Transaction.MaxTransactionSizeReached);
     });
   });
 
